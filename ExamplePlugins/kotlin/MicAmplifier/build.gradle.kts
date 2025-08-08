@@ -1,10 +1,13 @@
 version = "1.0.0"
-description = "Amplifies microphone input with gain and EQ"
+description = "Attempts to increase perceived loudness using Android Equalizer and LoudnessEnhancer."
 
 aliucord {
-    changelog.set("""
-        # 1.0.0
-        * Initial release
-        * Microphone amplification with equalizer
-    """.trimIndent())
+    authors.add("Omkar")
+    changelog.set(
+        """
+        1.0.0
+        - Initial release
+        - Adds Equalizer presence boost and LoudnessEnhancer on detected audio sessions
+        """.trimIndent()
+    )
 }
