@@ -1,13 +1,11 @@
 package com.yourusername.micamplifier
 
+import android.media.AudioManager
 import android.media.audiofx.Equalizer
 import android.media.audiofx.LoudnessEnhancer
 import com.aliucord.annotations.AliucordPlugin
 import com.aliucord.entities.Plugin
 import com.aliucord.patcher.Hook
-import com.aliucord.utils.DimenUtils.dp
-import com.discord.widgets.voice.VoiceViewBinding // More likely Discord class
-import java.lang.reflect.Method
 
 @AliucordPlugin
 class MicAmplifier : Plugin() {
@@ -16,18 +14,21 @@ class MicAmplifier : Plugin() {
     private var loudnessEnhancer: LoudnessEnhancer? = null
 
     override fun start() {
+        // Keep the plugin stable: only patch APIs that exist on Android
+        // We attempt to observe/attach to newly generated audio session IDs.
+        // Important: On most devices this pertains to playback, not mic input.
         try {
-            // Hook into audio session creation instead of non-existent methods
-            // This is a more realistic approach but may need adjustment
-            patcher.patch(
-                android.media.AudioManager::class.java.getDeclaredMethod("generateAudioSessionId"),
-                Hook { param ->
-                    val sessionId = param.result as Int
+            val method = AudioManager::class.java.getDeclaredMethod("generateAudioSessionId")
+            patcher.patch(method, Hook { hook ->
+                val sessionId = hook.result as? Int ?: return@Hook
+                // Defensive guard against invalid session
+                if (sessionId > 0) {
                     setupAudioEffects(sessionId)
+                    logger.info("MicAmplifier: Initialized audio effects on sessionId=$sessionId")
                 }
-            )
-        } catch (e: Exception) {
-            logger.error("Failed to hook audio methods", e)
+            })
+        } catch (e: Throwable) {
+            logger.error("MicAmplifier: Failed to hook AudioManager.generateAudioSessionId", e)
         }
     }
 
@@ -37,37 +38,43 @@ class MicAmplifier : Plugin() {
     }
 
     private fun setupAudioEffects(sessionId: Int) {
+        releaseAudioEffects()
+
         try {
-            releaseAudioEffects() // Clean up previous instances
-            
-            // Initialize audio effects
+            // Equalizer: attempt to boost presence region (1–4kHz) modestly
             equalizer = Equalizer(0, sessionId).apply {
                 enabled = true
-                // Boost frequencies that enhance voice (typically 1kHz-4kHz range)
-                for (i in 0 until numberOfBands) {
-                    val freq = getCenterFreq(i.toShort())
-                    when {
-                        freq >= 1000 && freq <= 4000 -> setBandLevel(i.toShort(), 1500) // +15dB boost
-                        freq >= 500 && freq < 1000 -> setBandLevel(i.toShort(), 1000)   // +10dB boost
-                        else -> setBandLevel(i.toShort(), 500) // +5dB slight boost
+                val bands = numberOfBands.toInt()
+                for (i in 0 until bands) {
+                    val centerHz = getCenterFreq(i.toShort()) / 1000 // API returns mHz
+                    val boost = when {
+                        centerHz in 1000..4000 -> 1200 // +12dB for presence region
+                        centerHz in 500..999 -> 800    // +8dB low mids
+                        else -> 400                   // +4dB gentle lift
                     }
+                    setBandLevel(i.toShort(), boost.toShort())
                 }
             }
 
+            // LoudnessEnhancer: target gain in millibels
+            // Use conservative defaults to avoid clipping artifacts
             loudnessEnhancer = LoudnessEnhancer(sessionId).apply {
-                setTargetGain(2000) // +20dB gain - adjust as needed (500-3000 range)
+                setTargetGain(1200) // +12dB; consider testing 600–2000
                 enabled = true
             }
-
-            logger.info("Audio effects initialized for session: $sessionId")
-        } catch (e: Exception) {
-            logger.error("Failed to setup audio effects", e)
+        } catch (e: Throwable) {
+            logger.error("MicAmplifier: Failed to setup audio effects for sessionId=$sessionId", e)
+            releaseAudioEffects()
         }
     }
 
     private fun releaseAudioEffects() {
-        equalizer?.release()
-        loudnessEnhancer?.release()
+        try {
+            equalizer?.release()
+        } catch (_: Throwable) {}
+        try {
+            loudnessEnhancer?.release()
+        } catch (_: Throwable) {}
         equalizer = null
         loudnessEnhancer = null
     }
