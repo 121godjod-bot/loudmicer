@@ -1,48 +1,51 @@
-package com.github.yournamehere
+package com.yourusername.micamplifier
 
-import android.content.Context
-import com.aliucord.Utils
+import android.media.audiofx.Equalizer
+import android.media.audiofx.LoudnessEnhancer
 import com.aliucord.annotations.AliucordPlugin
-import com.aliucord.api.CommandsAPI
 import com.aliucord.entities.Plugin
-import com.discord.api.commands.ApplicationCommandType
+import com.aliucord.patcher.Hook
+import com.discord.webrtc.VoiceEngine // Hypothetical import; adjust based on decompiled Discord classes
+import java.lang.reflect.Method
 
-// Aliucord Plugin annotation. Must be present on the main class of your plugin
-@AliucordPlugin(requiresRestart = false /* Whether your plugin requires a restart after being installed/updated */)
-// Plugin class. Must extend Plugin and override start and stop
-// Learn more: https://github.com/Aliucord/documentation/blob/main/plugin-dev/1_introduction.md#basic-plugin-structure
-class MyFirstCommand : Plugin() {
-    override fun start(context: Context) {
-        // Register a command with the name hello and description "My first command!" and no arguments.
-        // Learn more: https://github.com/Aliucord/documentation/blob/main/plugin-dev/2_commands.md
-        commands.registerCommand("hello", "My first command!") {
-            // Just return a command result with hello world as the content
-            CommandsAPI.CommandResult(
-                "Hello World!",
-                null, // List of embeds
-                false // Whether to send visible for everyone
-            )
-        }
+@AliucordPlugin
+class MicAmplifier : Plugin() {
 
-        // A bit more advanced command with arguments
-        commands.registerCommand("hellowitharguments", "Hello World but with arguments!", listOf(
-            Utils.createCommandOption(ApplicationCommandType.STRING, "name", "Person to say hello to"),
-            Utils.createCommandOption(ApplicationCommandType.USER, "user", "User to say hello to")
-        )) { ctx ->
-            // Check if a user argument was passed
-            if (ctx.containsArg("user")) {
-                val user = ctx.getRequiredUser("user")
-                CommandsAPI.CommandResult("Hello ${user.username}!")
-            } else {
-                // Returns either the argument value if present, or the defaultValue ("World" in this case)
-                val name = ctx.getStringOrDefault("name", "World")
-                CommandsAPI.CommandResult("Hello $name!")
+    private var equalizer: Equalizer? = null
+    private var loudnessEnhancer: LoudnessEnhancer? = null
+
+    override fun start() {
+        // Hook into Discord's voice input method (you may need to decompile Discord APK to find exact method)
+        patcher.patch(VoiceEngine::class.java.getDeclaredMethod("getAudioInputStream"), Hook { callFrame ->
+            val audioStream = callFrame.result as? AudioInputStream
+            if (audioStream != null) {
+                processAudio(audioStream)
             }
-        }
+        })
     }
 
-    override fun stop(context: Context) {
-        // Unregister our commands
-        commands.unregisterAll()
+    override fun stop() {
+        patcher.unpatchAll()
+        equalizer?.release()
+        loudnessEnhancer?.release()
+    }
+
+    private fun processAudio(stream: AudioInputStream) {
+        // Initialize Equalizer and LoudnessEnhancer on audio session
+        val audioSessionId = stream.audioSessionId // Assume this is accessible
+        equalizer = Equalizer(0, audioSessionId)
+        loudnessEnhancer = LoudnessEnhancer(audioSessionId)
+
+        // Amplify gain (make mic louder)
+        loudnessEnhancer?.setTargetGain(1000) // Max gain in millibels; adjust for loudness (test values 500-2000)
+        loudnessEnhancer?.enabled = true
+
+        // Apply simple EQ: Boost low frequencies for louder voice
+        equalizer?.setBandLevel(0.toShort(), 1500.toShort()) // Boost band 0 by 15dB
+        equalizer?.setBandLevel(1.toShort(), 1200.toShort()) // Boost band 1 by 12dB
+        equalizer?.enabled = true
+
+        // Process the stream (this is simplified; implement actual buffering if needed)
+        // Note: Real-time processing requires threading to avoid latency
     }
 }
